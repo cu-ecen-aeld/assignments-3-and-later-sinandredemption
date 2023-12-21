@@ -3,3 +3,4 @@ writer:
 
 clean:
 	rm writer
+	rm *.o
