@@ -17,7 +17,10 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
-    return true;
+    int ret = system(cmd);
+    if (ret == 0)
+        return true;
+    else return false;
 }
 
 /**
@@ -45,10 +48,8 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    va_end(args);
 /*
  * TODO:
  *   Execute a system command by calling fork, execv(),
@@ -58,10 +59,41 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t pid = -1;
+    pid = fork();
 
-    va_end(args);
+    if (pid == 0) // child
+    {
+        fprintf(stderr, "execv: '%s %s %s'\n", command[0], (command+1)[0], (command+1)[1]);
+        execv(command[0], command);
+        perror("execv");
+        exit(-1);
+    } else if (pid > 0) { // parent
+        int status = 1;
+        pid = waitpid(pid, &status, 0);
 
-    return true;
+        if (pid < 0) {
+            perror("waitpid");
+            return false;
+        }
+
+        if (WIFEXITED(status) && (WEXITSTATUS(status) == 0)) {
+            fprintf(stderr, "pid = %d exited with successfully with status %x\n", pid, status);
+            return true;
+        }
+        else {
+            fprintf(stderr, "Program exited with exit code = %d\n", WEXITSTATUS(status));
+            return false;
+        }
+    } else
+    {
+        perror("fork");
+        return false;
+    }
+
+    // Shouldn't reach here
+    fprintf(stderr, "Shouldn't reach here\n");
+    return false;
 }
 
 /**
@@ -80,18 +112,41 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    pid_t pid;
+    pid = fork();
 
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
+    if (pid == 0) // child
+    {
+        if (dup2(fd, 1) < 0) { perror("dup2"); abort(); }
+        close(fd);
+        int ret = execv(command[0], command);
+        if (ret != 0) {
+            perror("execv");
+            abort();
+        }
+    } else if (pid > 0) {
+        int status;
+        pid = waitpid(pid, &status, 0);
+
+        if (pid < 0) {
+            close(fd);
+            return false;
+        }
+
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            close(fd);
+            return true;
+        }
+        else {
+            close(fd);
+            return false;
+        }
+    } else {
+        close(fd);
+        return false;
+    }
 
     va_end(args);
 
