@@ -1,0 +1,20 @@
+
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+    echo "No arguments provided. Exiting."
+    exit 1
+fi
+
+case "$1" in
+    start)
+        start-stop-daemon -S --exec /usr/bin/aesdsocket -d
+        ;;
+    stop)
+        start-stop-daemon -K --sig 15 --exec /usr/bin/aesdsocket
+        ;;
+    *)
+        echo "Invalid argument. Use 'start' or 'stop'."
+        exit 1
+        ;;
+esac
