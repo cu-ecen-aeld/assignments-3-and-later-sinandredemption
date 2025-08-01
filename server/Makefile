@@ -1,5 +1,5 @@
 default: aesdsocket.c
-	gcc -g aesdsocket.c -o aesdsocket
+	gcc -g -pthread aesdsocket.c -o aesdsocket
 
 all: default
 
