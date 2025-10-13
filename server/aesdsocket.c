@@ -38,6 +38,9 @@ int sockfd = 0;
 FILE* fptr_w = NULL;
 pthread_mutex_t data_mutex;
 SLIST_HEAD(slisthead, thread_list_s) head;
+pthread_t ts_buffer_thread;
+time_t last_timestamp = 0;
+bool do_process_ts = true;
 
 void sighandler(int sig)
 {
@@ -77,7 +80,37 @@ void sighandler(int sig)
     pthread_mutex_unlock(&data_mutex);
     pthread_mutex_destroy(&data_mutex);
 
+    do_process_ts = false;
+    if (!pthread_join(ts_buffer_thread, NULL)) {
+        perror("pthread_join");
+        exit(__LINE__);
+    }
+
     exit(EXIT_SUCCESS);
+}
+
+void* process_ts_buffer(void* param) {
+    while (do_process_ts) {
+        if (last_timestamp == 0) { usleep(1000); continue; }
+
+        char rfc2822time[128], s[128+14];
+        pthread_mutex_lock(&data_mutex);
+
+        time_t now = last_timestamp;
+        struct tm *tm_info = localtime(&now);
+
+        strftime(rfc2822time, sizeof(rfc2822time), "%a, %d %b %Y %H:%M:%S %z", tm_info);
+
+        sprintf(s, "timestamp:%s\n", rfc2822time);
+
+        fwrite(s, sizeof(char), strlen(s), fptr_w);
+        fflush(fptr_w);
+
+        pthread_mutex_unlock(&data_mutex);
+        last_timestamp = 0;
+    }
+
+    return NULL;
 }
 
 void timer_handler(int signo) {
@@ -86,7 +119,9 @@ void timer_handler(int signo) {
         exit(__LINE__);
     }
 
-    char rfc2822time[128], s[128+14];
+    last_timestamp = time(NULL);
+
+    /*char rfc2822time[128], s[128+14];
     pthread_mutex_lock(&data_mutex);
 
     time_t now = time(NULL);
@@ -99,7 +134,7 @@ void timer_handler(int signo) {
     fwrite(s, sizeof(char), strlen(s), fptr_w);
     fflush(fptr_w);
 
-    pthread_mutex_unlock(&data_mutex);
+    pthread_mutex_unlock(&data_mutex);*/
 }
 
 void* process_connection(void* args)
@@ -193,6 +228,8 @@ void* process_connection(void* args)
     close(conn_thread_args->clientfd);
     fclose(fptr_r);
     conn_thread_args->status_flag = true; // signal completion to parent
+
+    return NULL;
 }
 
 int main(int argc, char **argv)
@@ -202,7 +239,6 @@ int main(int argc, char **argv)
     struct addrinfo hints, *res;
     int rv;
     char their_addr_str[INET_ADDRSTRLEN];
-    struct itimerval new_value, old_value;
 
     SLIST_INIT(&head);
 
@@ -286,6 +322,13 @@ int main(int argc, char **argv)
         exit(__LINE__);
     }
     syslog(LOG_DEBUG, "Listening sucessful.");
+
+    // Timer
+    if (pthread_create(&ts_buffer_thread, NULL, &process_ts_buffer, NULL) != 0) {
+        printf("Error! panikkk");
+        perror("pthread");
+        exit(__LINE__);
+    }
 
     addr_size = sizeof(their_addr);
     // Connect to client

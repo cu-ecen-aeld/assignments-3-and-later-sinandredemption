@@ -1,5 +1,5 @@
 default: aesdsocket.c
-	${CC} -g -pthread aesdsocket.c -o aesdsocket ${LDFLAGS}
+	${CC} -g -Wall -pthread aesdsocket.c -o aesdsocket ${LDFLAGS}
 
 all: default
 
