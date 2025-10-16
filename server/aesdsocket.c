@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <fcntl.h>
 #include "queue.h"
 
 #define MYPORT "9000"
@@ -41,6 +42,8 @@ SLIST_HEAD(slisthead, thread_list_s) head;
 pthread_t ts_buffer_thread;
 time_t last_timestamp = 0;
 bool do_process_ts = true;
+struct addrinfo *res;
+
 
 void sighandler(int sig)
 {
@@ -59,6 +62,7 @@ void sighandler(int sig)
             if (thread->conn_thread_args.status_flag == true)
             {
                 if (pthread_join(thread->thread_id, NULL) != 0) {
+                    syslog(LOG_DEBUG, "CRASH PANIC");
                     perror("pthread_join");
                     exit(__LINE__);
                 }
@@ -85,6 +89,9 @@ void sighandler(int sig)
         perror("pthread_join");
         exit(__LINE__);
     }
+
+    freeaddrinfo(res);  // Add this (make res global or pass it)
+    closelog();         // Add this before exit
 
     exit(EXIT_SUCCESS);
 }
@@ -120,6 +127,8 @@ void timer_handler(int signo) {
     }
 
     last_timestamp = time(NULL);
+    syslog(LOG_DEBUG, "Writing timestamp: %d\n", last_timestamp);
+    //fflush(stdout);
 
     /*char rfc2822time[128], s[128+14];
     pthread_mutex_lock(&data_mutex);
@@ -162,9 +171,9 @@ void* process_connection(void* args)
             }
 
             if (numbytes == 0) {
-                pthread_mutex_lock(&data_mutex);
+                //pthread_mutex_lock(&data_mutex);
                 syslog(LOG_DEBUG, "Connection closed by remote");
-                pthread_mutex_unlock(&data_mutex);
+                //pthread_mutex_unlock(&data_mutex);
                 break;
             }
 
@@ -234,9 +243,17 @@ void* process_connection(void* args)
 
 int main(int argc, char **argv)
 {
+    if (argc > 1) {
+        syslog(LOG_DEBUG, "Running fork()...");
+        int p = fork();
+        if (p != 0) {
+            syslog(LOG_DEBUG, "Goodbye!");
+            exit(EXIT_SUCCESS);
+        }
+    }
     struct sockaddr their_addr;
     socklen_t addr_size;
-    struct addrinfo hints, *res;
+    struct addrinfo hints;
     int rv;
     char their_addr_str[INET_ADDRSTRLEN];
 
@@ -307,14 +324,7 @@ int main(int argc, char **argv)
         exit(__LINE__);
     }
 
-    if (argc > 1) {
-        syslog(LOG_DEBUG, "Running fork()...");
-        int p = fork();
-        if (p != 0) {
-            syslog(LOG_DEBUG, "Goodbye!");
-            exit(EXIT_SUCCESS);
-        }
-    }
+    
 
     syslog(LOG_DEBUG, "Running listen()");
     if (listen(sockfd, BACKLOG) == -1) {
@@ -338,15 +348,27 @@ int main(int argc, char **argv)
     //     exit(1);
     // }
 
+    int opt = 1;
+    int flags;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct thread_list_s *new_thread;
+    int b = 1;
     for (;;) {
-        syslog(LOG_DEBUG, "Attempting to accept...");
+        //syslog(LOG_DEBUG, "Attempting to accept %d...", b++);
+        
+        flags = fcntl(sockfd, F_GETFL);
+        fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+
         int remote_fd = accept(sockfd, &their_addr, &addr_size);
 
+        flags = fcntl(sockfd, F_GETFL);
+        fcntl(sockfd, F_SETFL, flags & ~O_NONBLOCK);
+
         if (remote_fd == -1) {
-            perror("accept");
+            //perror("accept");
             // If accept fails, it's usually a recoverable error (e.g., EINTR), so continue to accept.
             // However, a persistent error might indicate a bigger problem.
+            //sleep(1);
             continue; // Go back and try to accept again
         }
 
@@ -388,5 +410,7 @@ int main(int argc, char **argv)
         }
     }
 
+    freeaddrinfo(res);  // Add this (make res global or pass it)
+    closelog();         // Add this before exit
     return 0;
 }
