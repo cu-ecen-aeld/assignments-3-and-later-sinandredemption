@@ -1,4 +1,5 @@
 #!/bin/sh
+make
 module=aesdchar
 device=aesdchar
 mode="664"
@@ -23,3 +24,4 @@ rm -f /dev/${device}
 mknod /dev/${device} c $major 0
 chgrp $group /dev/${device}
 chmod $mode  /dev/${device}
+chmod a+rw /dev/${device}
