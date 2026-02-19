@@ -68,6 +68,12 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 }
 
 /**
+ * Get the pointer to memory of the next element that will be written to
+ */
+char* aesd_circular_buffer_get_current(struct aesd_circular_buffer *buffer) {
+    return buffer->entry[buffer->in_offs].buffptr;
+}
+/**
 * Initializes the circular buffer described by @param buffer to an empty struct
 */
 void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)

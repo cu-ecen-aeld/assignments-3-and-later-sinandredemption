@@ -71,6 +71,10 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
     // Same as aesd_device static global but I like it verbose for some reason
     struct aesd_dev* fdev = (struct aesd_dev*)(filp->private_data);
+
+    if (mutex_lock_interruptible(&dev->lock))
+		return -ERESTARTSYS;
+
     struct aesd_circular_buffer *fbuff = &(fdev->buffer);
     size_t start;
     struct aesd_buffer_entry *entry = aesd_circular_buffer_find_entry_offset_for_fpos(fbuff, *f_pos, &start);
@@ -93,6 +97,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     retval = entry->size - start;
 
     out:
+    mutex_unlock(&(fdev->lock));
     return retval;
 }
 
@@ -106,13 +111,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
      * TODO: handle write
      */
 
-     // okayu, we gotta write buf of size `count`
-     // I think we can ignore f_pos
-     
-     // for now, just write directly.
-     // TBD lock
+     if (mutex_lock_interruptible(&dev->lock))
+		return -ERESTARTSYS;
 
-     
     // extend by allocating
     char *tmp_buff = kmalloc(count + buff_entry.size, GFP_KERNEL);
 
@@ -139,15 +140,22 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     buff_entry.size += count;
 
-    aesd_circular_buffer_add_entry(&(fdev->buffer), &buff_entry);
-    buff_entry.buffptr = NULL;
-    buff_entry.size = 0;
+    if (buff_entry.buffptr[buff_entry.size - 1] == '\n') {
+        PDEBUG("Adding entry to buffer with size %d", buff_entry.size);
+
+        // Free memory associated with existing buffer
+        kfree(aesd_circular_buffer_get_current(&(fdev->buffer)));
+
+        aesd_circular_buffer_add_entry(&(fdev->buffer), &buff_entry);
+        buff_entry.buffptr = NULL;
+        buff_entry.size = 0;
+    }
 
     retval = count;
     *f_pos += count;
-    // TBD unlock
      
     out:
+    mutex_unlock(&(fdev->lock));
     return retval;
 }
 
@@ -200,6 +208,8 @@ int aesd_init_module(void)
     }
     
     aesd_circular_buffer_init(&(aesd_device.buffer));
+
+    mutex_init(&(aesd_device.lock));
 
     return result;
 
