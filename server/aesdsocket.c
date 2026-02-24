@@ -16,6 +16,21 @@
 #include <fcntl.h>
 #include "queue.h"
 
+#ifndef USE_AESD_CHAR_DEVICE
+#error "Yoo dawg that not ok"
+#elif USE_AESD_CHAR_DEVICE == 1
+#define OUTPUT_DEVICE "/dev/aesdchar"
+#elif USE_AESD_CHAR_DEVICE == 0
+#define OUTPUT_DEVICE "/var/tmp/aesdsocketdata"
+#else
+#error "well that's weird"
+#endif
+
+#ifndef OUTPUT_DEVICE
+#error "YOOO dawg you trippin"
+#endif
+
+
 #define MYPORT "9000"
 #define BACKLOG 10
 #define MAX_DATA_SIZE 1024
@@ -77,7 +92,9 @@ void sighandler(int sig)
 
     if (fptr_w) {
         fclose(fptr_w);
-        remove("/var/tmp/aesdsocketdata");
+        #if USE_AESD_CHAR_DEVICE == 0
+        remove(OUTPUT_DEVICE);
+        #endif
     }
 
     pthread_mutex_lock(&data_mutex);
@@ -110,8 +127,10 @@ void* process_ts_buffer(void* param) {
 
         sprintf(s, "timestamp:%s\n", rfc2822time);
 
+#if USE_AESD_CHAR_DEVICE == 0
         fwrite(s, sizeof(char), strlen(s), fptr_w);
         fflush(fptr_w);
+#endif
 
         pthread_mutex_unlock(&data_mutex);
         last_timestamp = 0;
@@ -150,7 +169,7 @@ void* process_connection(void* args)
 {
     struct conn_thread_args_s *conn_thread_args = (struct conn_thread_args_s*)args;
     char *packet = NULL;
-    FILE *fptr_r = fopen("/var/tmp/aesdsocketdata", "rb");
+    FILE *fptr_r = fopen(OUTPUT_DEVICE, "rb");
     if (fptr_r == NULL) {
         perror("fopen");
         exit(__LINE__);
@@ -277,9 +296,9 @@ int main(int argc, char **argv)
         exit(__LINE__);
     }
 
-    syslog(LOG_DEBUG, "Opening file /var/tmp/aesdsocketdata...");
+    syslog(LOG_DEBUG, "Opening file %s...", OUTPUT_DEVICE);
     
-    fptr_w = fopen("/var/tmp/aesdsocketdata", "ab+");
+    fptr_w = fopen(OUTPUT_DEVICE, "ab+");
     if (fptr_w == NULL) {
         perror("fopen");
         exit(__LINE__);

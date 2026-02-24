@@ -72,7 +72,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     // Same as aesd_device static global but I like it verbose for some reason
     struct aesd_dev* fdev = (struct aesd_dev*)(filp->private_data);
 
-    if (mutex_lock_interruptible(&dev->lock))
+    if (mutex_lock_interruptible(&(fdev->lock)))
 		return -ERESTARTSYS;
 
     struct aesd_circular_buffer *fbuff = &(fdev->buffer);
@@ -111,7 +111,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
      * TODO: handle write
      */
 
-     if (mutex_lock_interruptible(&dev->lock))
+     if (mutex_lock_interruptible(&(fdev->lock)))
 		return -ERESTARTSYS;
 
     // extend by allocating
