@@ -40,6 +40,33 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     return NULL;
 }
 
+int aesd_circular_buffer_find_fpos(struct aesd_circular_buffer *buff,
+    size_t item_no, size_t size_off)
+{
+    // number of written cmds = in_off - out_off
+    // unless buffer is full
+    unsigned int ncmds = buff->in_offs - buff->out_offs;
+    if (ncmds == 0 && buff->full == true)
+        ncmds = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    if (item_no >= ncmds)
+        return -1;
+
+    int fpos = 0, i = buff->in_offs;
+    while (item_no != 0)
+    {
+        fpos += buff->entry[i++].size;
+        item_no--;
+    }
+
+    if (buff->entry[i].size <= size_off)
+        return -2;
+
+    fpos += size_off;
+
+    return fpos;
+}
+
 /**
 * Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs.
 * If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the

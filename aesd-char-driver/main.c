@@ -20,6 +20,7 @@
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 
 #define PRINTK_FAULT(CODE) PDEBUG("fault code: %d", CODE)
 
@@ -64,23 +65,28 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle read
      */
 
     // Same as aesd_device static global but I like it verbose for some reason
-    struct aesd_dev* fdev = (struct aesd_dev*)(filp->private_data);
+    struct aesd_dev* fdev;
+    size_t start;
+    struct aesd_circular_buffer *fbuff;
+    struct aesd_buffer_entry *entry;
+
+    PDEBUG("READ count = %d, f_pos = %lld", count, *f_pos);
+//    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+    fdev = (struct aesd_dev*)(filp->private_data);
 
     if (mutex_lock_interruptible(&(fdev->lock)))
 		return -ERESTARTSYS;
 
-    struct aesd_circular_buffer *fbuff = &(fdev->buffer);
-    size_t start;
-    struct aesd_buffer_entry *entry = aesd_circular_buffer_find_entry_offset_for_fpos(fbuff, *f_pos, &start);
+    fbuff = &(fdev->buffer);
+    entry = aesd_circular_buffer_find_entry_offset_for_fpos(fbuff, *f_pos, &start);
     
     if (entry == NULL) {
-        PRINTK_FAULT(__LINE__);
+        //PRINTK_FAULT(__LINE__);
         goto out;
     }
 
@@ -105,8 +111,11 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
-    struct aesd_dev* fdev = (struct aesd_dev*)(filp->private_data);
-    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("WRITE");
+    char *tmp_buff;
+    struct aesd_dev* fdev;
+    fdev = (struct aesd_dev*)(filp->private_data);
+    //PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle write
      */
@@ -115,7 +124,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		return -ERESTARTSYS;
 
     // extend by allocating
-    char *tmp_buff = kmalloc(count + buff_entry.size, GFP_KERNEL);
+    tmp_buff = kmalloc(count + buff_entry.size, GFP_KERNEL);
 
     if (tmp_buff == NULL)
     {
@@ -141,7 +150,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     buff_entry.size += count;
 
     if (buff_entry.buffptr[buff_entry.size - 1] == '\n') {
-        PDEBUG("Adding entry to buffer with size %d", buff_entry.size);
+        PDEBUG("Adding entry to buffer with size %d", (int)buff_entry.size);
 
         // Free memory associated with existing buffer
         kfree(aesd_circular_buffer_get_current(&(fdev->buffer)));
@@ -159,12 +168,90 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     return retval;
 }
 
+loff_t aesd_llseek(struct file *filp, loff_t off, int whence)
+{
+    struct aesd_dev *dev = filp->private_data;
+    long newpos, s = 0, i = 0;
+
+    PDEBUG("SEEK");
+    switch(whence) {
+	case 0: /* SEEK_SET */
+		newpos = off;
+		break;
+
+	case 1: /* SEEK_CUR */
+		newpos = filp->f_pos + off;
+		break;
+
+	case 2: /* SEEK_END */
+        s = 0;
+        if (mutex_lock_interruptible(&(dev->lock)))
+            return -ERESTARTSYS;            
+        for (i = dev->buffer.in_offs; i <= dev->buffer.out_offs; ++i)
+            s += dev->buffer.entry[i].size;
+		newpos = s + off;
+        mutex_unlock(&(dev->lock));
+		break;
+
+	default: /* can't happen */
+		return -EINVAL;
+	}
+	if (newpos<0) return -EINVAL;
+
+	filp->f_pos = newpos;
+	return newpos;
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    int ret, new_fpos;
+    struct aesd_seekto seekto;
+    struct aesd_dev *dev = filp->private_data;
+
+    PDEBUG("IOCTL");
+
+    if (!access_ok((const __user void*) arg, sizeof(struct aesd_seekto))) {
+       PRINTK_FAULT(__LINE__);
+       return -EFAULT;
+    }
+
+    if (copy_from_user(&seekto, (void*)arg, sizeof(struct aesd_seekto))) {
+        PRINTK_FAULT(__LINE__);
+        return -EFAULT;
+    }
+
+    switch (cmd) {
+        case AESDCHAR_IOCSEEKTO:
+            printk("seekto %d:%d,%d\n", cmd, seekto.write_cmd, seekto.write_cmd_offset);
+            if (mutex_lock_interruptible(&(dev->lock)))
+		        return -ERESTARTSYS;
+
+            new_fpos = aesd_circular_buffer_find_fpos(&dev->buffer, seekto.write_cmd, seekto.write_cmd_offset);
+            if (new_fpos < 0) {
+                PRINTK_FAULT(__LINE__);
+                ret = -EINVAL;
+            } else {
+                printk("new_fpos = %d", new_fpos);
+                filp->f_pos = new_fpos;
+                ret = 0;
+            }
+            mutex_unlock(&(dev->lock));
+            return ret;
+        default:
+            printk("seekto INVALID");
+            return -ENOTTY;
+    }
+
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek =   aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)

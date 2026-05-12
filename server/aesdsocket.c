@@ -8,12 +8,14 @@
 #include <stdio.h>
 #include <sys/syslog.h>
 #include <sys/time.h>
+#include <sys/ioctl.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
 #include <fcntl.h>
+#include "aesd_ioctl.h"
 #include "queue.h"
 
 #ifndef USE_AESD_CHAR_DEVICE
@@ -71,7 +73,7 @@ void sighandler(int sig)
     // Wait for all threads to join
     struct thread_list_s *thread, *tp;
     SLIST_FOREACH_SAFE(thread, &head, entries, tp) {
-        printf("Joining thread %d\n", (int)(thread->thread_id));
+        //printf("Joining thread %d\n", (int)(thread->thread_id));
         // Join
         while (true) {
             if (thread->conn_thread_args.status_flag == true)
@@ -169,12 +171,7 @@ void* process_connection(void* args)
 {
     struct conn_thread_args_s *conn_thread_args = (struct conn_thread_args_s*)args;
     char *packet = NULL;
-    FILE *fptr_r = fopen(OUTPUT_DEVICE, "rb");
-    if (fptr_r == NULL) {
-        perror("fopen");
-        exit(__LINE__);
-    }
-    printf("Entering new thread with clientfd: %d\n", conn_thread_args->clientfd);
+    //printf("Entering new thread with clientfd: %d\n", conn_thread_args->clientfd);
     for (;;)
     {
         // Recieve data
@@ -215,24 +212,46 @@ void* process_connection(void* args)
 
         pthread_mutex_lock(&data_mutex);
 
+        bool is_ioctl_cmd = false;
         if (numbytes > 0) {
-            // Packet is recieved
-            // So dump
-            size_t bwritten = 0;
-            bwritten = fwrite(packet, sizeof(char), packet_size, fptr_w);
-            if (bwritten != packet_size) {
-                perror("fwrite");
-                exit(__LINE__);
+            // Packet is recieved so process
+
+            // is it an ioctl command?
+            const char *aesd_ref_cmd = "AESDCHAR_IOCSEEKTO:";
+            is_ioctl_cmd = (packet_size >= strlen("AESDCHAR_IOCSEEKTO:X,Y"));
+            for (int i = 0; is_ioctl_cmd && (i < strlen(aesd_ref_cmd)); ++i)
+                if (packet[i] != aesd_ref_cmd[i]) is_ioctl_cmd = false;
+            
+            if (is_ioctl_cmd) {
+                struct aesd_seekto seekto;
+
+                char *aesd_cmd = malloc(packet_size + 1);
+                memcpy(aesd_cmd, packet, packet_size);
+                aesd_cmd[packet_size] = 0; // null-terminate
+
+                sscanf(aesd_cmd, "AESDCHAR_IOCSEEKTO:%d,%d",
+                    &seekto.write_cmd, &seekto.write_cmd_offset);
+                    
+                printf("sending: %d:%d,%d\n", AESDCHAR_IOCSEEKTO, seekto.write_cmd, seekto.write_cmd_offset);
+
+                ioctl(fileno(fptr_w), AESDCHAR_IOCSEEKTO, &seekto);
+            } else {
+                size_t bwritten = 0;
+                bwritten = fwrite(packet, sizeof(char), packet_size, fptr_w);
+                if (bwritten != packet_size) {
+                    perror("fwrite");
+                    exit(__LINE__);
+                }
             }
             fflush(fptr_w);
-        }
+        } else is_ioctl_cmd = false;
 
-        fseek(fptr_r, 0, SEEK_SET);
+        if (!is_ioctl_cmd) fseek(fptr_w, 0, SEEK_SET);
         // Transmit back
         for (;numbytes > 0;)
         {
             syslog(LOG_DEBUG, "Transmitting back...");
-            size_t bread = fread(buf, sizeof(char), MAX_DATA_SIZE, fptr_r);
+            size_t bread = fread(buf, sizeof(char), MAX_DATA_SIZE, fptr_w);
 
             // Transmit
             if ((bread > 0) && (send(conn_thread_args->clientfd, buf, bread, 0) == -1)) {
@@ -254,7 +273,6 @@ void* process_connection(void* args)
         }
     }
     close(conn_thread_args->clientfd);
-    fclose(fptr_r);
     conn_thread_args->status_flag = true; // signal completion to parent
 
     return NULL;
@@ -391,7 +409,7 @@ int main(int argc, char **argv)
             continue; // Go back and try to accept again
         }
 
-        printf("Recieved fd: %d\n", remote_fd);
+        //printf("Recieved fd: %d\n", remote_fd);
         inet_ntop(AF_INET, &(((struct sockaddr_in*)&their_addr)->sin_addr), their_addr_str, INET_ADDRSTRLEN);
         syslog(LOG_DEBUG, "Accepting connection from %s", their_addr_str);
 
@@ -417,7 +435,7 @@ int main(int argc, char **argv)
             // Join
             if (new_thread->conn_thread_args.status_flag == true)
             {
-                printf("Joining thread %d\n", (int)(new_thread->thread_id));
+                //printf("Joining thread %d\n", (int)(new_thread->thread_id));
                 if (pthread_join(new_thread->thread_id, NULL) != 0) {
                     perror("pthread_join");
                     exit(__LINE__);

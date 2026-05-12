@@ -23,7 +23,7 @@ struct aesd_buffer_entry
     /**
      * A location where the buffer contents in buffptr are stored
      */
-    const char *buffptr;
+    char *buffptr;
     /**
      * Number of bytes stored in buffptr
      */
@@ -59,6 +59,7 @@ extern void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
 extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
 
 extern char* aesd_circular_buffer_get_current(struct aesd_circular_buffer *buffer);
+extern int aesd_circular_buffer_find_fpos(struct aesd_circular_buffer *buff, size_t item_no, size_t size_off);
 
 /**
  * Create a for loop to iterate over each member of the circular buffer.
