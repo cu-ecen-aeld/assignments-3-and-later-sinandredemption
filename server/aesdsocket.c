@@ -314,13 +314,7 @@ int main(int argc, char **argv)
         exit(__LINE__);
     }
 
-    syslog(LOG_DEBUG, "Opening file %s...", OUTPUT_DEVICE);
     
-    fptr_w = fopen(OUTPUT_DEVICE, "ab+");
-    if (fptr_w == NULL) {
-        perror("fopen");
-        exit(__LINE__);
-    }
 
     struct itimerval tv;
     tv.it_value.tv_sec = 10;
@@ -422,6 +416,12 @@ int main(int argc, char **argv)
         new_thread->conn_thread_args.clientfd = remote_fd;
         new_thread->conn_thread_args.status_flag = false;
 
+        syslog(LOG_DEBUG, "Opening file %s...", OUTPUT_DEVICE);
+        fptr_w = fopen(OUTPUT_DEVICE, "ab+");
+        if (fptr_w == NULL) {
+            perror("fopen");
+            exit(__LINE__);
+        }
         // Create a new thread
         if (pthread_create(&(new_thread->thread_id), NULL, process_connection, &(new_thread->conn_thread_args)) != 0) {
             perror("pthread_create");
